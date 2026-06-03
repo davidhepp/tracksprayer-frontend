@@ -35,11 +35,11 @@ button {
 
 .operator-shell {
   min-height: 100vh;
-  padding: 18px;
+  padding: 14px;
 }
 
 .topbar {
-  margin: 0 auto 16px;
+  margin: 0 auto 12px;
   max-width: 1720px;
 }
 
@@ -52,7 +52,7 @@ button {
 }
 
 .topbar h1 {
-  font-size: clamp(1.7rem, 3vw, 2.7rem);
+  font-size: clamp(1.45rem, 2.4vw, 2.2rem);
   line-height: 1.04;
 }
 
@@ -93,8 +93,8 @@ button {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(500px, 1fr) minmax(260px, 320px);
-  gap: 14px;
+  grid-template-columns: minmax(260px, 310px) minmax(500px, 1fr) minmax(300px, 380px);
+  gap: 12px;
   max-width: 1720px;
   margin: 0 auto;
 }
@@ -114,7 +114,7 @@ button {
 }
 
 .panel-section {
-  padding: 16px;
+  padding: 14px;
   border-bottom: 1px solid #dce3de;
 }
 
@@ -123,7 +123,11 @@ button {
 }
 
 .section-heading {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
+}
+
+.compact-heading {
+  margin-bottom: 10px;
 }
 
 .location-search {
@@ -225,7 +229,7 @@ button {
   grid-template-columns: 68px minmax(0, 1fr) 58px;
   align-items: center;
   gap: 10px;
-  margin-top: 14px;
+  margin-top: 10px;
   color: #29352f;
   font-size: 0.86rem;
   font-weight: 680;
@@ -244,7 +248,7 @@ button {
 .dimension-list {
   display: grid;
   gap: 6px;
-  margin: 12px 0 2px;
+  margin: 0 0 2px;
   padding: 10px 12px;
   border: 1px solid #d1dbd5;
   border-radius: 8px;
@@ -269,14 +273,22 @@ button {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 14px;
+}
+
+.compact-buttons {
+  margin-top: 10px;
 }
 
 .primary-button,
 .secondary-button {
   min-height: 42px;
   border-radius: 8px;
+  padding: 9px 12px;
   font-weight: 760;
+  line-height: 1.15;
+  text-align: center;
+  white-space: normal;
 }
 
 .primary-button {
@@ -297,6 +309,62 @@ button {
 
 .secondary-button:hover {
   background: #f1f5f2;
+}
+
+.primary-button:disabled,
+.secondary-button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.full-width-button {
+  width: 100%;
+  margin-top: 12px;
+}
+
+.small-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 0.8rem;
+}
+
+.mode-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow: hidden;
+  border: 1px solid #b8c5bc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.mode-toggle button {
+  min-height: 38px;
+  border: 0;
+  border-right: 1px solid #d6dfd9;
+  background: transparent;
+  color: #26342d;
+  font-size: 0.82rem;
+  font-weight: 760;
+}
+
+.mode-toggle button:last-child {
+  border-right: 0;
+}
+
+.mode-toggle button:hover {
+  background: #f1f5f2;
+}
+
+.mode-toggle button.is-active {
+  background: #24755f;
+  color: #ffffff;
+}
+
+.helper-text {
+  margin: 10px 0 0;
+  color: #64726a;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .coordinate-box {
