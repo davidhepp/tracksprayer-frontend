@@ -1,6 +1,16 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+  type PointerEvent,
+} from "react";
 
-import type { Route } from "./+types/home";
+import { DebugPanel, MissionControls } from "../components/OperatorPanels";
+import { TrackMap } from "../components/TrackMap";
 import { createLogEntry, writeConsoleLog } from "../lib/logger";
 import type { GpsCoordinate, Point } from "../lib/mapMath";
 import {
@@ -9,140 +19,41 @@ import {
   gpsToWorldPixel,
   mapPointToGps,
   metersPerPixel,
-  offsetGpsByMeters,
-  rotatePoint,
   worldPixelToGps,
 } from "../lib/mapMath";
-
-const MAP_SIZE: Point = { x: 1000, y: 680 };
-const TILE_SIZE = 256;
-const DEFAULT_ZOOM = 18;
-const MIN_ZOOM = 16;
-const MAX_ZOOM = 20;
-const ZOOM_STEP = 0.5;
-const MAX_OSM_TILE_ZOOM = 19;
-const MAX_LOG_ENTRIES = 8;
-const OSM_TILE_URL = "https://tile.openstreetmap.org";
-const SCHWEINFURT_CENTER: GpsCoordinate = { lat: 50.04937, lng: 10.22175 };
-const MIN_TRACK_SCALE = 0.1;
-const MAX_TRACK_SCALE = 1;
-const MIN_OBSTACLE_SIZE_PX = 8;
-const SKIDPAD = {
-  outerDiameterMeters: 25,
-  innerDiameterMeters: 15,
-  centerDistanceMeters: 25,
-  boundsWidthMeters: 56,
-  boundsHeightMeters: 62,
-};
-
-type TrackPlacement = {
-  center: GpsCoordinate;
-  rotation: number;
-};
-
-type DragState =
-  | {
-      type: "map";
-      startPoint: Point;
-      startCenter: GpsCoordinate;
-    }
-  | {
-      type: "track";
-      pointerOffset: Point;
-    }
-  | {
-      type: "rotate";
-      centerPoint: Point;
-      startAngle: number;
-      startRotation: number;
-    }
-  | {
-      type: "obstacle";
-      startPoint: Point;
-      currentPoint: Point;
-    };
-
-type EditorMode = "navigate" | "obstacle";
-
-type DevicePosition = {
-  coordinate: GpsCoordinate;
-  accuracyMeters: number | null;
-  acquiredAt: string;
-};
-
-type Cone = {
-  id: string;
-  point: Point;
-  color: "blue" | "yellow" | "orange";
-};
-
-type ConeWaypoint = {
-  id: string;
-  color: Cone["color"];
-  coordinate: GpsCoordinate;
-};
-
-type ObstacleBox = {
-  id: string;
-  lat_min: number;
-  lon_min: number;
-  lat_max: number;
-  lon_max: number;
-};
-
-type RosPayload = {
-  generated_at: string;
-  track: {
-    center: GpsCoordinate;
-    rotation_degrees: number;
-    scale: number;
-    dimensions_meters: {
-      width: number;
-      height: number;
-      outer_diameter: number;
-      inner_diameter: number;
-    };
-  };
-  points_to_mark: Array<{
-    id: string;
-    color: Cone["color"];
-    lat: number;
-    lon: number;
-  }>;
-  obstacle_map: Array<{
-    id: string;
-    lat_min: number;
-    lon_min: number;
-    lat_max: number;
-    lon_max: number;
-    corners: {
-      northwest: GpsCoordinate;
-      northeast: GpsCoordinate;
-      southeast: GpsCoordinate;
-      southwest: GpsCoordinate;
-    };
-  }>;
-  obstacle_boxes_ros: Array<{
-    lat_min: number;
-    lon_min: number;
-    lat_max: number;
-    lon_max: number;
-  }>;
-};
-
-type MapTile = {
-  id: string;
-  url: string;
-  left: number;
-  top: number;
-  size: number;
-};
-
-type LocationSearchResult = {
-  id: string;
-  label: string;
-  coordinate: GpsCoordinate;
-};
+import {
+  DEFAULT_ZOOM,
+  MAP_SIZE,
+  MAX_LOG_ENTRIES,
+  MAX_TRACK_SCALE,
+  MAX_ZOOM,
+  MIN_OBSTACLE_SIZE_PX,
+  MIN_TRACK_SCALE,
+  MIN_ZOOM,
+  OSM_TILE_URL,
+  SCHWEINFURT_CENTER,
+  SKIDPAD,
+  ZOOM_STEP,
+  type DevicePosition,
+  type DragState,
+  type EditorMode,
+  type LocationSearchResult,
+  type ObstacleBox,
+  type TrackPlacement,
+} from "../lib/missionTypes";
+import { buildRosPayload } from "../lib/rosPayload";
+import {
+  angleBetween,
+  buildConeWaypoints,
+  buildMapTiles,
+  formatZoom,
+  mapRectToObstacleBox,
+  normalizeRotation,
+  obstacleBoxToMapRect,
+  pointsToRect,
+  zoomAroundAnchor,
+} from "../lib/trackGeometry";
+import type { Route } from "./+types/home";
 
 const initialTrack = {
   center: SCHWEINFURT_CENTER,
@@ -170,7 +81,9 @@ export default function Home() {
   const [trackScale, setTrackScale] = useState(1);
   const [editorMode, setEditorMode] = useState<EditorMode>("navigate");
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [coneWaypoints, setConeWaypoints] = useState<ConeWaypoint[]>([]);
+  const [coneWaypoints, setConeWaypoints] = useState(
+    () => buildConeWaypoints(initialTrack, 1, DEFAULT_ZOOM).slice(0, 0),
+  );
   const [obstacleBoxes, setObstacleBoxes] = useState<ObstacleBox[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([]);
@@ -228,7 +141,7 @@ export default function Home() {
   );
   const trackWarning = useMemo(() => {
     if (trackSize.x > MAP_SIZE.x * 0.9 || trackSize.y > MAP_SIZE.y * 0.9) {
-      return "Current zoom makes the fixed-size skidpad larger than the visible map.";
+      return "Current zoom makes the scaled skidpad larger than the visible map.";
     }
 
     if (
@@ -348,9 +261,7 @@ export default function Home() {
     [zoom],
   );
 
-  const handleTrackPointerDown = (
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => {
+  const handleTrackPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     if (editorMode === "obstacle") {
       return;
     }
@@ -367,9 +278,7 @@ export default function Home() {
     event.stopPropagation();
   };
 
-  const handleRotatePointerDown = (
-    event: React.PointerEvent<HTMLButtonElement>,
-  ) => {
+  const handleRotatePointerDown = (event: PointerEvent<HTMLButtonElement>) => {
     if (editorMode === "obstacle") {
       return;
     }
@@ -390,7 +299,7 @@ export default function Home() {
     event.stopPropagation();
   };
 
-  const handleMapPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+  const handleMapPointerDown = (event: PointerEvent<HTMLDivElement>) => {
     const point = toMapPoint(event.clientX, event.clientY);
 
     if (editorMode === "obstacle") {
@@ -411,9 +320,7 @@ export default function Home() {
     event.currentTarget.setPointerCapture(event.pointerId);
   };
 
-  const handleMapPointerMove = (
-    event: React.PointerEvent<HTMLDivElement>,
-  ) => {
+  const handleMapPointerMove = (event: PointerEvent<HTMLDivElement>) => {
     if (!dragState) {
       return;
     }
@@ -463,14 +370,14 @@ export default function Home() {
     setDragState(null);
   };
 
-  const handleRotationChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleRotationChange = (event: ChangeEvent<HTMLInputElement>) => {
     const rotation = Number(event.target.value);
     setTrack((current) => ({ ...current, rotation }));
     setConeWaypoints([]);
     addLog("info", `Track rotation set to ${rotation} degrees.`);
   };
 
-  const handleTrackScaleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleTrackScaleChange = (event: ChangeEvent<HTMLInputElement>) => {
     const scale = clamp(
       Number(event.target.value),
       MIN_TRACK_SCALE,
@@ -497,6 +404,11 @@ export default function Home() {
     });
     setConeWaypoints([]);
     addLog("info", "Skidpad overlay reset to the current map center.");
+  };
+
+  const handleEditorModeChange = (mode: EditorMode) => {
+    setEditorMode(mode);
+    setDragState(null);
   };
 
   const clearObstacles = () => {
@@ -533,18 +445,15 @@ export default function Home() {
       return;
     }
 
-    const anchorGps = mapPointToGps(anchor, MAP_SIZE, mapCenter, zoom);
-    const anchorWorldAtNextZoom = gpsToWorldPixel(anchorGps, constrainedZoom);
-
     setZoom(constrainedZoom);
     setMapCenter(
-      worldPixelToGps(
-        {
-          x: anchorWorldAtNextZoom.x + MAP_SIZE.x / 2 - anchor.x,
-          y: anchorWorldAtNextZoom.y + MAP_SIZE.y / 2 - anchor.y,
-        },
-        constrainedZoom,
-      ),
+      zoomAroundAnchor({
+        anchor,
+        currentCenter: mapCenter,
+        currentZoom: zoom,
+        nextZoom: constrainedZoom,
+        mapSize: MAP_SIZE,
+      }),
     );
     setConeWaypoints([]);
     addLog("info", `Map zoom set to z${formatZoom(constrainedZoom)}.`);
@@ -598,7 +507,7 @@ export default function Home() {
     );
   };
 
-  const handleLocationSearch = async (event: React.FormEvent) => {
+  const handleLocationSearch = async (event: FormEvent) => {
     event.preventDefault();
     const query = searchQuery.trim();
 
@@ -668,6 +577,11 @@ export default function Home() {
     }
   };
 
+  const handleSearchQueryChange = (query: string) => {
+    setSearchQuery(query);
+    setSearchError(null);
+  };
+
   const selectLocation = (result: LocationSearchResult) => {
     setMapCenter(result.coordinate);
     setTrack((current) => ({ ...current, center: result.coordinate }));
@@ -690,814 +604,62 @@ export default function Home() {
       </header>
 
       <section className="workspace" aria-label="Track configuration workspace">
-        <aside className="control-panel" aria-label="Mission controls">
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Real map source</p>
-              <h2>Location</h2>
-            </div>
-            <form className="location-search" onSubmit={handleLocationSearch}>
-              <label htmlFor="location-search">Search location</label>
-              <div>
-                <input
-                  id="location-search"
-                  name="location-search"
-                  placeholder="Schweinfurt, Germany"
-                  type="search"
-                  value={searchQuery}
-                  onChange={(event) => {
-                    setSearchQuery(event.target.value);
-                    setSearchError(null);
-                  }}
-                />
-                <button type="submit" disabled={isSearching}>
-                  {isSearching ? "..." : "Search"}
-                </button>
-              </div>
-              {searchError && <p role="status">{searchError}</p>}
-            </form>
-            {searchResults.length > 0 && (
-              <ol className="search-results">
-                {searchResults.map((result) => (
-                  <li key={result.id}>
-                    <button type="button" onClick={() => selectLocation(result)}>
-                      <span>{result.label}</span>
-                      <small>
-                        {result.coordinate.lat.toFixed(6)},{" "}
-                        {result.coordinate.lng.toFixed(6)}
-                      </small>
-                    </button>
-                  </li>
-                ))}
-              </ol>
-            )}
-            <CoordinateCard
-              label="Current map center"
-              coordinate={mapCenter}
-              detail={
-                devicePosition
-                  ? `Device GPS, ${formatAccuracy(devicePosition.accuracyMeters)}`
-                  : "Default: Schweinfurt, Germany"
-              }
-            />
-            <button
-              type="button"
-              className="primary-button full-width-button"
-              onClick={requestDeviceLocation}
-            >
-              Use device GPS
-            </button>
-          </section>
+        <MissionControls
+          coneWaypointsCount={coneWaypoints.length}
+          devicePosition={devicePosition}
+          editorMode={editorMode}
+          isSearching={isSearching}
+          mapCenter={mapCenter}
+          obstacleCount={obstacleBoxes.length}
+          plannedConeWaypoints={plannedConeWaypoints}
+          searchError={searchError}
+          searchQuery={searchQuery}
+          searchResults={searchResults}
+          track={track}
+          trackScale={trackScale}
+          trackWarning={trackWarning}
+          onClearObstacles={clearObstacles}
+          onEditorModeChange={handleEditorModeChange}
+          onGenerateRoute={handleGenerateRoute}
+          onRequestDeviceLocation={requestDeviceLocation}
+          onResetTrack={resetTrack}
+          onRotationChange={handleRotationChange}
+          onSearchQueryChange={handleSearchQueryChange}
+          onSearchSubmit={handleLocationSearch}
+          onSelectLocation={selectLocation}
+          onTrackScaleChange={handleTrackScaleChange}
+        />
 
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Track overlay</p>
-              <h2>Skidpad setup</h2>
-            </div>
-            <div className="dimension-list">
-              <span>Scale: {Math.round(trackScale * 100)}%</span>
-              <span>
-                Size: {(SKIDPAD.boundsWidthMeters * trackScale).toFixed(1)} x{" "}
-                {(SKIDPAD.boundsHeightMeters * trackScale).toFixed(1)} m
-              </span>
-              <span>
-                Outer circle: {(SKIDPAD.outerDiameterMeters * trackScale).toFixed(1)} m
-              </span>
-            </div>
-            <label className="range-control">
-              <span>Rotation</span>
-              <input
-                min="-180"
-                max="180"
-                step="1"
-                type="range"
-                value={track.rotation}
-                onChange={handleRotationChange}
-              />
-              <strong>{track.rotation} deg</strong>
-            </label>
-            <label className="range-control">
-              <span>Scale</span>
-              <input
-                min={MIN_TRACK_SCALE}
-                max={MAX_TRACK_SCALE}
-                step="0.05"
-                type="range"
-                value={trackScale}
-                onChange={handleTrackScaleChange}
-              />
-              <strong>{Math.round(trackScale * 100)}%</strong>
-            </label>
-            {trackWarning && (
-              <p className="warning-banner" role="status">
-                {trackWarning}
-              </p>
-            )}
-            <div className="button-row">
-              <button type="button" className="secondary-button" onClick={resetTrack}>
-                Reset
-              </button>
-              <button type="button" className="primary-button" onClick={handleGenerateRoute}>
-                Go
-              </button>
-            </div>
-          </section>
+        <TrackMap
+          devicePosition={devicePosition}
+          draftObstacleRect={draftObstacleRect}
+          dragState={dragState}
+          editorMode={editorMode}
+          mapCenter={mapCenter}
+          mapRef={mapRef}
+          mapTiles={mapTiles}
+          obstacleCount={obstacleBoxes.length}
+          track={track}
+          trackSize={trackSize}
+          trackTopLeft={trackTopLeft}
+          visibleObstacleBoxes={visibleObstacleBoxes}
+          zoom={zoom}
+          onMapPointerDown={handleMapPointerDown}
+          onMapPointerMove={handleMapPointerMove}
+          onMapPointerUp={handleMapPointerUp}
+          onRotatePointerDown={handleRotatePointerDown}
+          onTrackPointerDown={handleTrackPointerDown}
+          onZoomChange={changeZoom}
+        />
 
-          <section className="panel-section">
-            <div className="section-heading compact-heading">
-              <p className="eyebrow">Obstacle editor</p>
-              <h2>Rectangle boxes</h2>
-            </div>
-            <div className="mode-toggle" role="group" aria-label="Map interaction mode">
-              <button
-                type="button"
-                className={editorMode === "navigate" ? "is-active" : ""}
-                onClick={() => {
-                  setEditorMode("navigate");
-                  setDragState(null);
-                }}
-              >
-                Move map
-              </button>
-              <button
-                type="button"
-                className={editorMode === "obstacle" ? "is-active" : ""}
-                onClick={() => {
-                  setEditorMode("obstacle");
-                  setDragState(null);
-                }}
-              >
-                Draw obstacle
-              </button>
-            </div>
-            <div className="button-row compact-buttons">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={obstacleBoxes.length === 0}
-                onClick={clearObstacles}
-              >
-                Clear boxes
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => setEditorMode("navigate")}
-              >
-                Done
-              </button>
-            </div>
-            <p className="helper-text">
-              {editorMode === "obstacle"
-                ? "Drag on the map to create an obstacle rectangle."
-                : `${obstacleBoxes.length} obstacle box(es) in the ROS export.`}
-            </p>
-          </section>
-
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Output preview</p>
-              <h2>Cone spray points</h2>
-            </div>
-            <CoordinateList
-              committed={coneWaypoints.length > 0}
-              waypoints={plannedConeWaypoints}
-            />
-          </section>
-        </aside>
-
-        <section className="map-section" aria-label="Map and track editor">
-          <div
-            ref={mapRef}
-            className={`map-viewport ${dragState?.type === "map" ? "is-panning" : ""} ${
-              editorMode === "obstacle" ? "is-drawing-obstacle" : ""
-            }`}
-            onPointerDown={handleMapPointerDown}
-            onPointerMove={handleMapPointerMove}
-            onPointerUp={handleMapPointerUp}
-            onPointerCancel={handleMapPointerUp}
-          >
-            <MapTiles tiles={mapTiles} />
-            <div className="map-layer map-grid" />
-            <div className="map-label north">N</div>
-            <div className="map-label scale">OSM z{formatZoom(zoom)}</div>
-            <div
-              className="zoom-controls"
-              aria-label="Map zoom controls"
-              onPointerDown={(event) => event.stopPropagation()}
-            >
-              <button
-                type="button"
-                disabled={zoom >= MAX_ZOOM}
-                onClick={() => changeZoom(zoom + ZOOM_STEP)}
-                aria-label="Zoom in"
-              >
-                +
-              </button>
-              <button
-                type="button"
-                disabled={zoom <= MIN_ZOOM}
-                onClick={() => changeZoom(zoom - ZOOM_STEP)}
-                aria-label="Zoom out"
-              >
-                -
-              </button>
-            </div>
-            {devicePosition && (
-              <RobotMarker
-                coordinate={devicePosition.coordinate}
-                mapCenter={mapCenter}
-                zoom={zoom}
-              />
-            )}
-            <div className="map-layer obstacle-layer" aria-hidden="true">
-              {visibleObstacleBoxes.map(({ obstacle, rect }, index) => (
-                <div
-                  key={obstacle.id}
-                  className="obstacle-rect"
-                  style={{
-                    left: `${(rect.left / MAP_SIZE.x) * 100}%`,
-                    top: `${(rect.top / MAP_SIZE.y) * 100}%`,
-                    width: `${(rect.width / MAP_SIZE.x) * 100}%`,
-                    height: `${(rect.height / MAP_SIZE.y) * 100}%`,
-                  }}
-                >
-                  <span>{index + 1}</span>
-                </div>
-              ))}
-              {draftObstacleRect && (
-                <div
-                  className="obstacle-rect is-draft"
-                  style={{
-                    left: `${(draftObstacleRect.left / MAP_SIZE.x) * 100}%`,
-                    top: `${(draftObstacleRect.top / MAP_SIZE.y) * 100}%`,
-                    width: `${(draftObstacleRect.width / MAP_SIZE.x) * 100}%`,
-                    height: `${(draftObstacleRect.height / MAP_SIZE.y) * 100}%`,
-                  }}
-                />
-              )}
-            </div>
-            <div
-              className={`track-overlay ${
-                editorMode === "obstacle" ? "is-obstacle-mode" : ""
-              }`}
-              style={{
-                left: `${(trackTopLeft.x / MAP_SIZE.x) * 100}%`,
-                top: `${(trackTopLeft.y / MAP_SIZE.y) * 100}%`,
-                width: `${(trackSize.x / MAP_SIZE.x) * 100}%`,
-                height: `${(trackSize.y / MAP_SIZE.y) * 100}%`,
-                transform: `rotate(${track.rotation}deg)`,
-              }}
-              onPointerDown={handleTrackPointerDown}
-              role="button"
-              tabIndex={0}
-              aria-label="Draggable skidpad track overlay"
-            >
-              <button
-                type="button"
-                className="rotation-handle"
-                onPointerDown={handleRotatePointerDown}
-                aria-label="Rotate skidpad overlay"
-              />
-              <SkidpadOverlay />
-            </div>
-            <a
-              className="osm-attribution"
-              href="https://www.openstreetmap.org/copyright"
-              rel="noreferrer"
-              target="_blank"
-            >
-              © OpenStreetMap contributors
-            </a>
-          </div>
-          <div className="map-footer">
-            <MapLegend
-              hasDevicePosition={Boolean(devicePosition)}
-              hasObstacles={obstacleBoxes.length > 0}
-            />
-            <div className="gps-readout">
-              <span>{devicePosition ? "Device GPS" : "Map center"}</span>
-              <strong>
-                {(devicePosition?.coordinate ?? mapCenter).lat.toFixed(6)},{" "}
-                {(devicePosition?.coordinate ?? mapCenter).lng.toFixed(6)}
-              </strong>
-            </div>
-          </div>
-        </section>
-
-        <aside className="control-panel right-panel" aria-label="Available data and logs">
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Robot state</p>
-              <h2>ROS data</h2>
-            </div>
-            <UnavailableData label="Battery" />
-            <UnavailableData label="Spray can" />
-            <UnavailableData label="ROS bridge" />
-          </section>
-
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Obstacle map</p>
-              <h2>ROS coordinates</h2>
-            </div>
-            <ObstacleList obstacles={obstacleBoxes} onRemove={removeObstacle} />
-          </section>
-
-          <section className="panel-section">
-            <div className="section-heading export-heading">
-              <div>
-                <p className="eyebrow">Debug export</p>
-                <h2>ROS JSON</h2>
-              </div>
-              <button type="button" className="secondary-button small-button" onClick={copyRosPayload}>
-                Copy
-              </button>
-            </div>
-            <pre className="json-output">{rosPayloadJson}</pre>
-          </section>
-
-          <section className="panel-section">
-            <div className="section-heading">
-              <p className="eyebrow">Diagnostics</p>
-              <h2>Event log</h2>
-            </div>
-            <ol className="event-log">
-              {logs.map((entry) => (
-                <li key={entry.id} className={entry.level}>
-                  <time>{entry.timestamp}</time>
-                  <span>{entry.message}</span>
-                </li>
-              ))}
-            </ol>
-          </section>
-        </aside>
+        <DebugPanel
+          logs={logs}
+          obstacleBoxes={obstacleBoxes}
+          rosPayloadJson={rosPayloadJson}
+          onCopyRosPayload={copyRosPayload}
+          onRemoveObstacle={removeObstacle}
+        />
       </section>
     </main>
   );
-}
-
-function CoordinateCard({
-  label,
-  coordinate,
-  detail,
-}: {
-  label: string;
-  coordinate: GpsCoordinate;
-  detail: string;
-}) {
-  return (
-    <div className="coordinate-card">
-      <span>{label}</span>
-      <strong>
-        {coordinate.lat.toFixed(6)}, {coordinate.lng.toFixed(6)}
-      </strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
-function UnavailableData({ label }: { label: string }) {
-  return (
-    <div className="unavailable-row">
-      <span>{label}</span>
-      <strong>Not connected</strong>
-    </div>
-  );
-}
-
-function CoordinateList({
-  committed,
-  waypoints,
-}: {
-  committed: boolean;
-  waypoints: ConeWaypoint[];
-}) {
-  return (
-    <div className="coordinate-box">
-      <div className="coordinate-state">
-        <span>{committed ? "Generated points" : "Live preview"}</span>
-        <strong>{waypoints.length} pts</strong>
-      </div>
-      <ol>
-        {waypoints.slice(0, 10).map((waypoint, index) => (
-          <li key={waypoint.id}>
-            <span className={`cone-index ${waypoint.color}`}>
-              {String(index + 1).padStart(2, "0")}
-            </span>
-            <code>
-              {waypoint.coordinate.lat.toFixed(7)},{" "}
-              {waypoint.coordinate.lng.toFixed(7)}
-            </code>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-function ObstacleList({
-  obstacles,
-  onRemove,
-}: {
-  obstacles: ObstacleBox[];
-  onRemove: (id: string) => void;
-}) {
-  if (obstacles.length === 0) {
-    return (
-      <p className="empty-state">
-        Draw a rectangle on the map to create ROS obstacle boxes.
-      </p>
-    );
-  }
-
-  return (
-    <ol className="obstacle-list">
-      {obstacles.map((obstacle, index) => (
-        <li key={obstacle.id}>
-          <div>
-            <span>Obstacle {index + 1}</span>
-            <code>
-              lat {obstacle.lat_min.toFixed(7)} to {obstacle.lat_max.toFixed(7)}
-              <br />
-              lon {obstacle.lon_min.toFixed(7)} to {obstacle.lon_max.toFixed(7)}
-            </code>
-          </div>
-          <button
-            type="button"
-            className="icon-button"
-            onClick={() => onRemove(obstacle.id)}
-            aria-label={`Remove obstacle ${index + 1}`}
-          >
-            x
-          </button>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-function MapTiles({ tiles }: { tiles: MapTile[] }) {
-  return (
-    <div className="map-layer map-tiles" aria-hidden="true">
-      {tiles.map((tile) => (
-        <img
-          key={tile.id}
-          alt=""
-          draggable={false}
-          src={tile.url}
-          style={{
-            left: `${(tile.left / MAP_SIZE.x) * 100}%`,
-            top: `${(tile.top / MAP_SIZE.y) * 100}%`,
-            width: `${(tile.size / MAP_SIZE.x) * 100}%`,
-            height: `${(tile.size / MAP_SIZE.y) * 100}%`,
-          }}
-        />
-      ))}
-    </div>
-  );
-}
-
-function RobotMarker({
-  coordinate,
-  mapCenter,
-  zoom,
-}: {
-  coordinate: GpsCoordinate;
-  mapCenter: GpsCoordinate;
-  zoom: number;
-}) {
-  const point = gpsToMapPoint(coordinate, MAP_SIZE, mapCenter, zoom);
-  const isVisible =
-    point.x >= 0 && point.x <= MAP_SIZE.x && point.y >= 0 && point.y <= MAP_SIZE.y;
-
-  if (!isVisible) {
-    return null;
-  }
-
-  return (
-    <div
-      className="robot-marker"
-      style={{
-        left: `${(point.x / MAP_SIZE.x) * 100}%`,
-        top: `${(point.y / MAP_SIZE.y) * 100}%`,
-      }}
-      title={`${coordinate.lat}, ${coordinate.lng}`}
-    >
-      <span />
-    </div>
-  );
-}
-
-function SkidpadOverlay() {
-  return (
-    <svg
-      viewBox={`-${SKIDPAD.boundsWidthMeters / 2} -${SKIDPAD.boundsHeightMeters / 2} ${SKIDPAD.boundsWidthMeters} ${SKIDPAD.boundsHeightMeters}`}
-      aria-hidden="true"
-    >
-      <rect
-        x={-SKIDPAD.boundsWidthMeters / 2}
-        y={-SKIDPAD.boundsHeightMeters / 2}
-        width={SKIDPAD.boundsWidthMeters}
-        height={SKIDPAD.boundsHeightMeters}
-        rx="1.6"
-      />
-      <circle cx={-12.5} cy="0" r={SKIDPAD.outerDiameterMeters / 2} />
-      <circle cx={12.5} cy="0" r={SKIDPAD.outerDiameterMeters / 2} />
-      <circle className="inner-limit" cx={-12.5} cy="0" r={SKIDPAD.innerDiameterMeters / 2} />
-      <circle className="inner-limit" cx={12.5} cy="0" r={SKIDPAD.innerDiameterMeters / 2} />
-      <path className="start-lane" d="M-1 -30 V-13 M1 -30 V-13 M-1 13 V30 M1 13 V30" />
-      {buildConePositionsMeters().map((cone) => (
-        <g key={cone.id} className={`cone ${cone.color}`}>
-          <circle cx={cone.point.x} cy={cone.point.y} r="0.42" />
-          <path
-            d={`M${cone.point.x - 0.45} ${cone.point.y + 0.65} L${cone.point.x} ${
-              cone.point.y - 0.65
-            } L${cone.point.x + 0.45} ${cone.point.y + 0.65} Z`}
-          />
-        </g>
-      ))}
-    </svg>
-  );
-}
-
-function MapLegend({
-  hasDevicePosition,
-  hasObstacles,
-}: {
-  hasDevicePosition: boolean;
-  hasObstacles: boolean;
-}) {
-  return (
-    <div className="legend" aria-label="Map legend">
-      {hasDevicePosition && (
-        <span>
-          <i className="legend-current" /> Device GPS
-        </span>
-      )}
-      <span>
-        <i className="legend-cone" /> Cone spray point
-      </span>
-      {hasObstacles && (
-        <span>
-          <i className="legend-obstacle" /> Obstacle
-        </span>
-      )}
-    </div>
-  );
-}
-
-function buildConeWaypoints(
-  track: TrackPlacement,
-  trackScale: number,
-  zoom: number,
-): ConeWaypoint[] {
-  return buildConePositionsMeters().map((cone) => {
-    const scaledPoint = {
-      x: cone.point.x * trackScale,
-      y: cone.point.y * trackScale,
-    };
-    const rotatedPoint = rotatePoint(scaledPoint, { x: 0, y: 0 }, track.rotation);
-
-    return {
-      id: cone.id,
-      color: cone.color,
-      coordinate: offsetGpsByMeters(
-        track.center,
-        { x: rotatedPoint.x, y: -rotatedPoint.y },
-        zoom,
-      ),
-    };
-  });
-}
-
-function buildConePositionsMeters(): Cone[] {
-  const conePoints: Cone[] = [];
-  const coneRadius = SKIDPAD.outerDiameterMeters / 2;
-  const innerConeRadius = SKIDPAD.innerDiameterMeters / 2;
-  const coneAngles = [-90, -60, -30, 0, 30, 60, 90, 120, 150, 180, 210, 240];
-
-  for (const angle of coneAngles) {
-    const radians = (angle * Math.PI) / 180;
-    conePoints.push({
-      id: `left-outer-${angle}`,
-      color: "blue",
-      point: {
-        x: -12.5 + Math.cos(radians) * coneRadius,
-        y: Math.sin(radians) * coneRadius,
-      },
-    });
-    conePoints.push({
-      id: `right-inner-${angle}`,
-      color: "yellow",
-      point: {
-        x: 12.5 + Math.cos(radians) * innerConeRadius,
-        y: Math.sin(radians) * innerConeRadius,
-      },
-    });
-  }
-
-  for (const y of [-25, -18, 18, 25]) {
-    conePoints.push({
-      id: `start-left-${y}`,
-      color: "orange",
-      point: { x: -1.6, y },
-    });
-    conePoints.push({
-      id: `start-right-${y}`,
-      color: "orange",
-      point: { x: 1.6, y },
-    });
-  }
-
-  return conePoints;
-}
-
-function pointsToRect(startPoint: Point, endPoint: Point) {
-  return {
-    left: Math.min(startPoint.x, endPoint.x),
-    top: Math.min(startPoint.y, endPoint.y),
-    width: Math.abs(endPoint.x - startPoint.x),
-    height: Math.abs(endPoint.y - startPoint.y),
-  };
-}
-
-function mapRectToObstacleBox(
-  rect: ReturnType<typeof pointsToRect>,
-  mapSize: Point,
-  mapCenter: GpsCoordinate,
-  zoom: number,
-): ObstacleBox {
-  const northwest = mapPointToGps(
-    { x: rect.left, y: rect.top },
-    mapSize,
-    mapCenter,
-    zoom,
-  );
-  const southeast = mapPointToGps(
-    { x: rect.left + rect.width, y: rect.top + rect.height },
-    mapSize,
-    mapCenter,
-    zoom,
-  );
-
-  return {
-    id: `obstacle-${Date.now()}-${Math.round(rect.left)}-${Math.round(rect.top)}`,
-    lat_min: roundGps(Math.min(northwest.lat, southeast.lat)),
-    lon_min: roundGps(Math.min(northwest.lng, southeast.lng)),
-    lat_max: roundGps(Math.max(northwest.lat, southeast.lat)),
-    lon_max: roundGps(Math.max(northwest.lng, southeast.lng)),
-  };
-}
-
-function obstacleBoxToMapRect(
-  obstacle: ObstacleBox,
-  mapCenter: GpsCoordinate,
-  zoom: number,
-) {
-  const northwest = gpsToMapPoint(
-    { lat: obstacle.lat_max, lng: obstacle.lon_min },
-    MAP_SIZE,
-    mapCenter,
-    zoom,
-  );
-  const southeast = gpsToMapPoint(
-    { lat: obstacle.lat_min, lng: obstacle.lon_max },
-    MAP_SIZE,
-    mapCenter,
-    zoom,
-  );
-
-  return pointsToRect(northwest, southeast);
-}
-
-function buildRosPayload(
-  track: TrackPlacement,
-  trackScale: number,
-  waypoints: ConeWaypoint[],
-  obstacles: ObstacleBox[],
-): RosPayload {
-  return {
-    generated_at: new Date().toISOString(),
-    track: {
-      center: {
-        lat: roundGps(track.center.lat),
-        lng: roundGps(track.center.lng),
-      },
-      rotation_degrees: track.rotation,
-      scale: Number(trackScale.toFixed(2)),
-      dimensions_meters: {
-        width: roundMeasurement(SKIDPAD.boundsWidthMeters * trackScale),
-        height: roundMeasurement(SKIDPAD.boundsHeightMeters * trackScale),
-        outer_diameter: roundMeasurement(SKIDPAD.outerDiameterMeters * trackScale),
-        inner_diameter: roundMeasurement(SKIDPAD.innerDiameterMeters * trackScale),
-      },
-    },
-    points_to_mark: waypoints.map((waypoint) => ({
-      id: waypoint.id,
-      color: waypoint.color,
-      lat: roundGps(waypoint.coordinate.lat),
-      lon: roundGps(waypoint.coordinate.lng),
-    })),
-    obstacle_map: obstacles.map((obstacle) => ({
-      id: obstacle.id,
-      lat_min: obstacle.lat_min,
-      lon_min: obstacle.lon_min,
-      lat_max: obstacle.lat_max,
-      lon_max: obstacle.lon_max,
-      corners: {
-        northwest: {
-          lat: obstacle.lat_max,
-          lng: obstacle.lon_min,
-        },
-        northeast: {
-          lat: obstacle.lat_max,
-          lng: obstacle.lon_max,
-        },
-        southeast: {
-          lat: obstacle.lat_min,
-          lng: obstacle.lon_max,
-        },
-        southwest: {
-          lat: obstacle.lat_min,
-          lng: obstacle.lon_min,
-        },
-      },
-    })),
-    obstacle_boxes_ros: obstacles.map((obstacle) => ({
-      lat_min: obstacle.lat_min,
-      lon_min: obstacle.lon_min,
-      lat_max: obstacle.lat_max,
-      lon_max: obstacle.lon_max,
-    })),
-  };
-}
-
-function buildMapTiles(
-  center: GpsCoordinate,
-  zoom: number,
-  mapSize: Point,
-): MapTile[] {
-  const tileZoom = Math.min(Math.floor(zoom), MAX_OSM_TILE_ZOOM);
-  const tileScale = 2 ** (zoom - tileZoom);
-  const centerWorld = gpsToWorldPixel(center, zoom);
-  const topLeft = {
-    x: centerWorld.x - mapSize.x / 2,
-    y: centerWorld.y - mapSize.y / 2,
-  };
-  const visibleTileSize = TILE_SIZE * tileScale;
-  const firstX = Math.floor(topLeft.x / visibleTileSize);
-  const lastX = Math.floor((topLeft.x + mapSize.x) / visibleTileSize);
-  const firstY = Math.floor(topLeft.y / visibleTileSize);
-  const lastY = Math.floor((topLeft.y + mapSize.y) / visibleTileSize);
-  const tilesPerAxis = 2 ** tileZoom;
-  const tiles: MapTile[] = [];
-
-  for (let x = firstX; x <= lastX; x += 1) {
-    for (let y = firstY; y <= lastY; y += 1) {
-      if (y < 0 || y >= tilesPerAxis) {
-        continue;
-      }
-
-      const wrappedX = ((x % tilesPerAxis) + tilesPerAxis) % tilesPerAxis;
-      tiles.push({
-        id: `${formatZoom(zoom)}-${tileZoom}-${wrappedX}-${y}`,
-        url: `${OSM_TILE_URL}/${tileZoom}/${wrappedX}/${y}.png`,
-        left: x * visibleTileSize - topLeft.x,
-        top: y * visibleTileSize - topLeft.y,
-        size: visibleTileSize,
-      });
-    }
-  }
-
-  return tiles;
-}
-
-function formatZoom(zoom: number) {
-  return Number.isInteger(zoom) ? String(zoom) : zoom.toFixed(1);
-}
-
-function angleBetween(center: Point, point: Point) {
-  return (Math.atan2(point.y - center.y, point.x - center.x) * 180) / Math.PI;
-}
-
-function normalizeRotation(rotation: number) {
-  const normalized = ((rotation + 180) % 360) - 180;
-  return Number(normalized.toFixed(1));
-}
-
-function roundGps(value: number) {
-  return Number(value.toFixed(7));
-}
-
-function roundMeasurement(value: number) {
-  return Number(value.toFixed(2));
-}
-
-function formatAccuracy(accuracyMeters: number | null) {
-  if (accuracyMeters === null) {
-    return "accuracy unknown";
-  }
-
-  return `accuracy ±${accuracyMeters} m`;
 }

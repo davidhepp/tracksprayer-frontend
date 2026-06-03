@@ -471,6 +471,10 @@ button {
   cursor: grabbing;
 }
 
+.map-viewport.is-drawing-obstacle {
+  cursor: crosshair;
+}
+
 .map-layer {
   position: absolute;
   inset: 0;
@@ -560,6 +564,44 @@ button {
   opacity: 0.42;
 }
 
+.obstacle-layer {
+  z-index: 6;
+  pointer-events: none;
+}
+
+.obstacle-rect {
+  position: absolute;
+  min-width: 2px;
+  min-height: 2px;
+  border: 2px solid #d12e3f;
+  border-radius: 4px;
+  background: rgba(209, 46, 63, 0.22);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.65),
+    0 4px 14px rgba(93, 22, 30, 0.22);
+}
+
+.obstacle-rect span {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  display: inline-grid;
+  min-width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 999px;
+  background: #d12e3f;
+  color: #ffffff;
+  font-size: 0.72rem;
+  font-weight: 820;
+}
+
+.obstacle-rect.is-draft {
+  border-style: dashed;
+  background: rgba(209, 46, 63, 0.12);
+  box-shadow: none;
+}
+
 .track-overlay {
   position: absolute;
   z-index: 5;
@@ -571,6 +613,10 @@ button {
 
 .track-overlay:active {
   cursor: grabbing;
+}
+
+.track-overlay.is-obstacle-mode {
+  pointer-events: none;
 }
 
 .rotation-handle {
@@ -721,6 +767,11 @@ button {
   background: linear-gradient(90deg, #2574c8 0 33%, #f3cb3f 33% 66%, #e97835 66%);
 }
 
+.legend-obstacle {
+  border: 2px solid #d12e3f;
+  background: rgba(209, 46, 63, 0.22);
+}
+
 .gps-readout {
   min-width: 210px;
   text-align: right;
@@ -761,6 +812,79 @@ button {
 .unavailable-row strong {
   color: #68756d;
   font-size: 0.84rem;
+}
+
+.export-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.json-output {
+  overflow: auto;
+  max-height: 360px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #cfd9d3;
+  border-radius: 8px;
+  background: #101715;
+  color: #d7f1e7;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  white-space: pre;
+}
+
+.obstacle-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.obstacle-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 8px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid #d7d1d3;
+  border-radius: 8px;
+  background: #fff8f8;
+}
+
+.obstacle-list span {
+  display: block;
+  margin-bottom: 5px;
+  color: #7f1d2a;
+  font-size: 0.78rem;
+  font-weight: 820;
+}
+
+.obstacle-list code {
+  color: #29352f;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.icon-button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid #d6b9bf;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #8f2331;
+  font-size: 0.9rem;
+  font-weight: 820;
+  line-height: 1;
+}
+
+.icon-button:hover {
+  background: #ffecef;
 }
 
 .empty-state {
