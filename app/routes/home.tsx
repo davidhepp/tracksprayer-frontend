@@ -35,6 +35,7 @@ import {
   SKIDPAD,
   ZOOM_STEP,
   type DevicePosition,
+  type ConeWaypoint,
   type DragState,
   type EditorMode,
   type LocationSearchResult,
@@ -81,9 +82,7 @@ export default function Home() {
   const [trackScale, setTrackScale] = useState(1);
   const [editorMode, setEditorMode] = useState<EditorMode>("navigate");
   const [dragState, setDragState] = useState<DragState | null>(null);
-  const [coneWaypoints, setConeWaypoints] = useState(
-    () => buildConeWaypoints(initialTrack, 1, DEFAULT_ZOOM).slice(0, 0),
-  );
+  const [coneWaypoints, setConeWaypoints] = useState<ConeWaypoint[]>([]);
   const [obstacleBoxes, setObstacleBoxes] = useState<ObstacleBox[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<LocationSearchResult[]>([]);
